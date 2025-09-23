@@ -4,18 +4,25 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Devices;
 using Newtonsoft.Json;
 using AgentFunctionApp.Models;
+using AgentFunctionApp.Services;
 
 namespace AgentFunctionApp.Functions
 {
     public class AgentCoordinationFunctions
     {
         private readonly ILogger<AgentCoordinationFunctions> _logger;
+        private readonly AgentDecisionService _decisionService;
+        private readonly DeviceTwinService _deviceTwinService;
         private static readonly string IoTHubConnectionString = Environment.GetEnvironmentVariable("IoTHubConnectionString") ?? "";
         private static readonly ServiceClient serviceClient = ServiceClient.CreateFromConnectionString(IoTHubConnectionString);
-        
-        public AgentCoordinationFunctions(ILogger<AgentCoordinationFunctions> logger)  
+        private static readonly string ServiceBusConnectionString = Environment.GetEnvironmentVariable("ServiceBusConnection") ?? "";
+        private static readonly ServiceBusClient serviceBusClient = new ServiceBusClient(ServiceBusConnectionString);
+
+        public AgentCoordinationFunctions(ILogger<AgentCoordinationFunctions> logger, AgentDecisionService decisionService, DeviceTwinService deviceTwinService)
         {
             _logger = logger;
+            _decisionService = decisionService;
+            _deviceTwinService = deviceTwinService;
         }
 
         [Function("ExecuteDeviceCommands")]
@@ -30,14 +37,22 @@ namespace AgentFunctionApp.Functions
 
             try
             {
-                var method = new CloudToDeviceMethod("AgentCommand");
-                method.SetPayloadJson(JsonConvert.SerializeObject(deviceCommand));
+                string methodName = deviceCommand.Command switch
+                {
+                    "EmergencyStop" => "HandleEmergencyStopAsync",
+                    "ResetErrorStatus" => "HandleResetErrorStatusAsync",
+                    "AdjustProductionRate" => "HandleAdjustProductionRateAsync",
+                    _ => deviceCommand.Command // fallback to original name
+                };
+
+                var method = new CloudToDeviceMethod(methodName);
+                method.SetPayloadJson(JsonConvert.SerializeObject(deviceCommand.Parameters));
                 method.ResponseTimeout = TimeSpan.FromSeconds(30);
 
                 var response = await serviceClient.InvokeDeviceMethodAsync(
                     deviceCommand.DeviceId, method);
 
-                _logger.LogInformation($"Command executed on {deviceCommand.DeviceId}. Status: {response.Status}");
+                _logger.LogInformation($"Command {methodName} executed on {deviceCommand.DeviceId}. Status: {response.Status}");
 
                 if (response.Status != 200)
                 {
@@ -51,27 +66,6 @@ namespace AgentFunctionApp.Functions
             }
         }
 
-        [Function("ProcessAgentStatus")]
-        public async Task ProcessAgentStatus(
-            [ServiceBusTrigger("agent-status", Connection = "ServiceBusConnection")]
-            ServiceBusReceivedMessage message)
-        {
-            try
-            {
-                var statusMessage = JsonConvert.DeserializeObject<AgentStatusMessage>(
-                    message.Body.ToString());
-
-                _logger.LogInformation($"AGENT STATUS: {statusMessage.AgentId} ({statusMessage.AgentType}) - {statusMessage.Status}");
-
-                // Process agent status updates
-                await ProcessAgentStatusUpdate(statusMessage);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error processing agent status: {ex.Message}");
-                throw;
-            }
-        }
 
         [Function("MonitorAgentHealth")]
         public async Task MonitorAgentHealth(
@@ -87,7 +81,7 @@ namespace AgentFunctionApp.Functions
 
             foreach (var lineId in productionLines)
             {
-                var devices = GetDevicesInLine(lineId);
+                var devices = await _deviceTwinService.GetDevicesInLineAsync(lineId);
 
                 // Simulate checking device health
                 foreach (var deviceId in devices)
@@ -102,70 +96,6 @@ namespace AgentFunctionApp.Functions
             // await SendHealthAlertIfNeeded(log);
         }
 
-        private async Task ProcessAgentStatusUpdate(AgentStatusMessage statusMessage)
-        {
-            // Process different types of agent status updates
-            switch (statusMessage.AgentType)
-            {
-                case "Device":
-                    await ProcessDeviceAgentStatus(statusMessage);
-                    break;
 
-                case "Line":
-                    await ProcessLineAgentStatus(statusMessage);
-                    break;
-
-                case "Plant":
-                    await ProcessPlantAgentStatus(statusMessage);
-                    break;
-
-                default:
-                    _logger.LogWarning($"Unknown agent type: {statusMessage.AgentType}");
-                    break;
-            }
-        }
-
-        private async Task ProcessDeviceAgentStatus(AgentStatusMessage statusMessage)
-        {
-            // Log device agent actions
-            if (statusMessage.StatusData.ContainsKey("LastAction"))
-            {
-                var lastAction = statusMessage.StatusData["LastAction"].ToString();
-                _logger.LogInformation($"Device agent {statusMessage.AgentId} completed action: {lastAction}");
-
-                // You could trigger follow-up actions here based on device status
-                if (lastAction == "EmergencyStopCompleted")
-                {
-                    _logger.LogInformation($"Emergency stop confirmed for {statusMessage.AgentId}");
-                }
-                else if (lastAction == "ProductionRateAdjusted")
-                {
-                    _logger.LogInformation($"Production rate adjustment confirmed for {statusMessage.AgentId}");
-                }
-            }
-        }
-
-        private async Task ProcessLineAgentStatus(AgentStatusMessage statusMessage)
-        {
-            // Process line-level status updates
-            _logger.LogInformation($"Line agent status update: {statusMessage.AgentId} - {statusMessage.Status}");
-        }
-
-        private async Task ProcessPlantAgentStatus(AgentStatusMessage statusMessage)
-        {
-            // Process plant-level status updates
-            _logger.LogInformation($"Plant agent status update: {statusMessage.AgentId} - {statusMessage.Status}");
-        }
-
-        // Helper method
-        private static List<string> GetDevicesInLine(string lineId)
-        {
-            return lineId switch
-            {
-                "ProductionLine1" => new List<string> { "Device1", "Device2", "Device3" },
-                "ProductionLine2" => new List<string> { "Device4", "Device5", "Device6" },
-                _ => new List<string>()
-            };
-        }
     }
 }

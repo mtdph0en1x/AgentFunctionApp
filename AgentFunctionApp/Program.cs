@@ -26,6 +26,7 @@ var host = new HostBuilder()
 
         // Register your custom services
         services.AddScoped<AgentDecisionService>();
+        services.AddSingleton<DeviceTwinService>();
     })
     .Build();
 

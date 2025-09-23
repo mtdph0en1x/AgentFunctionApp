@@ -12,7 +12,62 @@ namespace AgentFunctionApp.Services
             _logger = logger;
         }
 
-        
+
+        public DecisionResult AnalyzeCriticalAlert(CriticalErrorAlert alert)
+        {
+            var decision = new DecisionResult
+            {
+                DeviceId = alert.DeviceId,
+                LineId = alert.LineId,
+                AlertType = "Critical",
+                Priority = alert.ErrorPriority
+            };
+
+            // Determine action based on error flags
+            if (alert.HasEmergencyStop == 1)
+            {
+                decision.RecommendedAction = "EmergencyStop";
+                decision.Urgency = "Critical";
+                decision.Reason = "Emergency stop detected - immediate shutdown required";
+                decision.AffectedDevices = GetLineDevices(alert.LineId);
+                decision.Parameters["SafetyProtocol"] = true;
+            }
+            else if (alert.HasPowerFailure == 1)
+            {
+                decision.RecommendedAction = "PowerFailureProtocol";
+                decision.Urgency = "Critical";
+                decision.Reason = "Power failure - safe shutdown required";
+                decision.AffectedDevices = GetLineDevices(alert.LineId);
+                decision.Parameters["SafeShutdown"] = true;
+            }
+            else if (alert.HasSensorFailure == 1)
+            {
+                decision.RecommendedAction = "SensorDiagnostic";
+                decision.Urgency = "High";
+                decision.Reason = "Critical sensor failure - diagnostics required";
+                decision.AffectedDevices = new List<string> { alert.DeviceId };
+                decision.Parameters["DiagnosticLevel"] = "Full";
+            }
+            else if (alert.HasUnknownError == 1)
+            {
+                decision.RecommendedAction = "DiagnosticScan";
+                decision.Urgency = "High";
+                decision.Reason = "Unknown critical error - investigation required";
+                decision.AffectedDevices = new List<string> { alert.DeviceId };
+                decision.Parameters["InvestigationLevel"] = "Comprehensive";
+            }
+            else
+            {
+                decision.RecommendedAction = "ImmediateReset";
+                decision.Urgency = "High";
+                decision.Reason = $"Critical error code: {alert.DeviceError}";
+                decision.AffectedDevices = new List<string> { alert.DeviceId };
+            }
+
+            _logger.LogInformation($"Critical alert decision for {alert.DeviceId}: {decision.RecommendedAction}");
+            return decision;
+        }
+
         public DecisionResult AnalyzeDeviceAlert(DeviceAlertMessage alert)
         {
             var decision = new DecisionResult
@@ -38,8 +93,13 @@ namespace AgentFunctionApp.Services
             {
                 decision = AnalyzeProductionAlert(alert, decision);
             }
+            // Device-specific analysis
+            else if (alert.AlertType == "DeviceSpecific")
+            {
+                decision = AnalyzeDeviceSpecificAlert(alert, decision);
+            }
 
-            _logger.LogInformation($"Decision made for {alert.DeviceId}: {decision.RecommendedAction}");
+            _logger.LogInformation($"Decision made for {alert.DeviceType} device {alert.DeviceId}: {decision.RecommendedAction}");
             return decision;
         }
 
@@ -85,9 +145,7 @@ namespace AgentFunctionApp.Services
             return result;
         }
 
-        /// <summary>
-        /// Determines if a plant-wide optimization is needed
-        /// </summary>
+        
         public PlantOptimizationResult AnalyzePlantOptimization(List<LineStatus> lineStatuses)
         {
             var result = new PlantOptimizationResult
@@ -224,6 +282,124 @@ namespace AgentFunctionApp.Services
             return decision;
         }
 
+        private DecisionResult AnalyzeDeviceSpecificAlert(DeviceAlertMessage alert, DecisionResult decision)
+        {
+            switch (alert.DeviceType)
+            {
+                case AgentFunctionApp.Models.DeviceType.Press:
+                    return AnalyzePressAlert(alert, decision);
+
+                case AgentFunctionApp.Models.DeviceType.Conveyor:
+                    return AnalyzeConveyorAlert(alert, decision);
+
+                case AgentFunctionApp.Models.DeviceType.QualityStation:
+                    return AnalyzeQualityStationAlert(alert, decision);
+
+                case AgentFunctionApp.Models.DeviceType.Compressor:
+                    return AnalyzeCompressorAlert(alert, decision);
+
+                default:
+                    decision.RecommendedAction = "Monitor";
+                    decision.Urgency = "Low";
+                    decision.Reason = $"Unknown device type: {alert.DeviceType}";
+                    break;
+            }
+
+            return decision;
+        }
+
+        private DecisionResult AnalyzePressAlert(DeviceAlertMessage alert, DecisionResult decision)
+        {
+            if (alert.Pressure.HasValue)
+            {
+                if (alert.Pressure > 100) // Critical pressure threshold
+                {
+                    decision.RecommendedAction = "EmergencyStop";
+                    decision.Urgency = "Critical";
+                    decision.Reason = $"Critical pressure level: {alert.Pressure} PSI";
+                    decision.AffectedDevices = new List<string> { alert.DeviceId };
+                }
+                else if (alert.Pressure > 85) // High pressure threshold
+                {
+                    decision.RecommendedAction = "ReducePressure";
+                    decision.Urgency = "High";
+                    decision.Reason = $"High pressure level: {alert.Pressure} PSI";
+                    decision.Parameters["TargetPressure"] = 75;
+                }
+            }
+            return decision;
+        }
+
+        private DecisionResult AnalyzeConveyorAlert(DeviceAlertMessage alert, DecisionResult decision)
+        {
+            if (alert.Speed.HasValue)
+            {
+                if (alert.Speed < 10) // Too slow
+                {
+                    decision.RecommendedAction = "AdjustSpeed";
+                    decision.Urgency = "Medium";
+                    decision.Reason = $"Conveyor speed too low: {alert.Speed} m/min";
+                    decision.Parameters["TargetSpeed"] = 20;
+                }
+                else if (alert.Speed > 50) // Too fast
+                {
+                    decision.RecommendedAction = "ReduceSpeed";
+                    decision.Urgency = "High";
+                    decision.Reason = $"Conveyor speed too high: {alert.Speed} m/min";
+                    decision.Parameters["TargetSpeed"] = 40;
+                }
+            }
+            return decision;
+        }
+
+        private DecisionResult AnalyzeQualityStationAlert(DeviceAlertMessage alert, DecisionResult decision)
+        {
+            if (alert.PassRate.HasValue)
+            {
+                if (alert.PassRate < 70) // Poor quality
+                {
+                    decision.RecommendedAction = "QualityInvestigation";
+                    decision.Urgency = "High";
+                    decision.Reason = $"Low pass rate: {alert.PassRate}%";
+                    decision.AffectedDevices = GetLineDevices(alert.LineId);
+                    decision.Parameters["TargetPassRate"] = 95;
+                }
+                else if (alert.PassRate < 90) // Below target
+                {
+                    decision.RecommendedAction = "QualityAdjustment";
+                    decision.Urgency = "Medium";
+                    decision.Reason = $"Pass rate below target: {alert.PassRate}%";
+                    decision.Parameters["TargetPassRate"] = 95;
+                }
+            }
+            return decision;
+        }
+
+        private DecisionResult AnalyzeCompressorAlert(DeviceAlertMessage alert, DecisionResult decision)
+        {
+            if (alert.OutputPressure.HasValue && alert.SystemAirPressure.HasValue)
+            {
+                var pressureDiff = alert.SystemAirPressure.Value - alert.OutputPressure.Value;
+
+                if (pressureDiff > 20) // Significant pressure loss
+                {
+                    decision.RecommendedAction = "CompressorMaintenance";
+                    decision.Urgency = "High";
+                    decision.Reason = $"Pressure loss detected: {pressureDiff} PSI difference";
+                    decision.Parameters["SystemPressure"] = alert.SystemAirPressure;
+                    decision.Parameters["OutputPressure"] = alert.OutputPressure;
+                }
+                else if (alert.OutputPressure < 80) // Low output pressure
+                {
+                    decision.RecommendedAction = "IncreaseCompression";
+                    decision.Urgency = "Medium";
+                    decision.Reason = $"Low output pressure: {alert.OutputPressure} PSI";
+                    decision.Parameters["TargetPressure"] = 90;
+                }
+            }
+            return decision;
+        }
+
         private DeviceStatus FindBottleneckDevice(List<DeviceStatus> deviceStatuses)
         {
             // Find device with lowest effective rate (considering both production rate and quality)
@@ -272,13 +448,14 @@ namespace AgentFunctionApp.Services
 
         private List<string> GetLineDevices(string lineId)
         {
+            // This method is now deprecated - use DeviceTwinService.GetDevicesInLineAsync() instead
             return lineId switch
             {
-                "ProductionLine1" => new List<string> { "Device1", "Device2", "Device3" },
-                "ProductionLine2" => new List<string> { "Device4", "Device5", "Device6" },
+                "ProductionLine1" => new List<string> { "Device1", "Device2", "Device3", "Compressor1" },
                 _ => new List<string>()
             };
         }
+
 
         #endregion
     }
@@ -324,12 +501,23 @@ namespace AgentFunctionApp.Services
     public class DeviceStatus
     {
         public string DeviceId { get; set; }
+        public AgentFunctionApp.Models.DeviceType DeviceType { get; set; }
         public string Status { get; set; }
+        public string WorkorderId { get; set; }
         public int ProductionRate { get; set; }
         public int MaxProductionRate { get; set; } = 80;
         public double Temperature { get; set; }
         public double QualityPercentage { get; set; } = 95.0;
         public int RecentErrorCount { get; set; }
+
+        // Device-specific properties based on DeviceType
+        public double? Pressure { get; set; }              // Press Device
+        public double? Speed { get; set; }                 // Conveyor Device
+        public int? GoodCount { get; set; }                // Quality Station Device
+        public int? BadCount { get; set; }                 // Quality Station Device
+        public double? PassRate { get; set; }              // Quality Station Device
+        public double? OutputPressure { get; set; }        // Compressor Device
+        public double? SystemAirPressure { get; set; }     // Compressor Device
     }
 
     public class LineStatus
