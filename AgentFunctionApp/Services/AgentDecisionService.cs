@@ -449,11 +449,25 @@ namespace AgentFunctionApp.Services
         private List<string> GetLineDevices(string lineId)
         {
             // This method is now deprecated - use DeviceTwinService.GetDevicesInLineAsync() instead
-            return lineId switch
+            // Fallback logic for backwards compatibility
+            _logger.LogWarning($"DEPRECATED: GetLineDevices called for {lineId}. Use DeviceTwinService.GetDevicesInLineAsync() instead.");
+
+            // Extract line number from lineId (e.g., "ProductionLine1" -> "1", "ProductionLine2" -> "2")
+            var lineNumber = lineId.Replace("ProductionLine", "").Trim();
+
+            if (!string.IsNullOrEmpty(lineNumber))
             {
-                "ProductionLine1" => new List<string> { "Device1", "Device2", "Device3", "Compressor1" },
-                _ => new List<string>()
-            };
+                return new List<string>
+                {
+                    $"Press{lineNumber}",
+                    $"Conveyor{lineNumber}",
+                    $"QualityStation{lineNumber}",
+                    $"Compressor{lineNumber}"
+                };
+            }
+
+            // If we can't determine the line number, return empty list
+            return new List<string>();
         }
 
 

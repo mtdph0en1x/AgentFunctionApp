@@ -183,11 +183,28 @@ namespace AgentFunctionApp.Services
 
         private List<string> GetFallbackLineDevices(string lineId)
         {
-            return lineId switch
+            // Attempt to parse devices from naming convention instead of hardcoding
+            // This will work for devices named like: Press1, Conveyor1, QualityStation1, etc.
+            // or Press2, Conveyor2, QualityStation2, etc.
+            _logger.LogWarning($"Using fallback device mapping for line {lineId} - device twin query failed");
+
+            // Extract line number from lineId (e.g., "ProductionLine1" -> "1", "ProductionLine2" -> "2")
+            var lineNumber = lineId.Replace("ProductionLine", "").Trim();
+
+            if (!string.IsNullOrEmpty(lineNumber))
             {
-                "ProductionLine1" => new List<string> { "Press1", "Conveyor1", "QualityStation1", "Compressor1" },
-                _ => new List<string>()
-            };
+                return new List<string>
+                {
+                    $"Press{lineNumber}",
+                    $"Conveyor{lineNumber}",
+                    $"QualityStation{lineNumber}",
+                    $"Compressor{lineNumber}"
+                };
+            }
+
+            // If we can't determine the line number, return empty list
+            _logger.LogError($"Cannot determine devices for line {lineId} - invalid line format");
+            return new List<string>();
         }
     }
 
