@@ -3,6 +3,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using System.Net;
+using AgentFunctionApp.Models;
 
 namespace AgentFunctionApp.Functions
 {
@@ -30,16 +31,12 @@ namespace AgentFunctionApp.Functions
             try
             {
                 var query = new QueryDefinition(
-                    @"SELECT c.DeviceId, c.DeviceType, c.LineId, c.LineName,
-                             c.AvgTemperature, c.AvgProductionRate,
-                             c.AvailabilityPercentage, c.CurrentErrorCode,
-                             c.WindowEnd, c.DocumentType
-                      FROM c
+                    @"SELECT * FROM c
                       WHERE c.DocumentType IN ('telemetry-compressor', 'telemetry-press', 'telemetry-conveyor', 'telemetry-quality')
                       ORDER BY c.WindowEnd DESC");
 
-                var iterator = _container.GetItemQueryIterator<dynamic>(query);
-                var items = new List<dynamic>();
+                var iterator = _container.GetItemQueryIterator<DeviceTelemetry>(query);
+                var items = new List<DeviceTelemetry>();
 
                 while (iterator.HasMoreResults)
                 {
@@ -49,8 +46,8 @@ namespace AgentFunctionApp.Functions
 
                 // Get latest record per device
                 var latestByDevice = items
-                    .GroupBy(x => (string)x.DeviceId)
-                    .Select(g => g.OrderByDescending(x => (string)x.WindowEnd).First())
+                    .GroupBy(x => x.DeviceId)
+                    .Select(g => g.OrderByDescending(x => x.WindowEnd).First())
                     .ToList();
 
                 var httpResponse = req.CreateResponse(HttpStatusCode.OK);
@@ -82,8 +79,8 @@ namespace AgentFunctionApp.Functions
                       ORDER BY c.WindowEnd DESC")
                     .WithParameter("@deviceId", deviceId);
 
-                var iterator = _container.GetItemQueryIterator<dynamic>(query);
-                var items = new List<dynamic>();
+                var iterator = _container.GetItemQueryIterator<DeviceTelemetry>(query);
+                var items = new List<DeviceTelemetry>();
 
                 while (iterator.HasMoreResults)
                 {
@@ -104,7 +101,7 @@ namespace AgentFunctionApp.Functions
                     timestamp = item.WindowEnd,
                     temperature = item.AvgTemperature,
                     productionRate = item.AvgProductionRate,
-                    availability = (double)item.AvailabilityPercentage * 100
+                    availability = item.AvailabilityPercentage * 100
                 }).Reverse().ToList();
 
                 var result = new
