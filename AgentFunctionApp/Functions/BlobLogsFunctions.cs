@@ -41,7 +41,8 @@ namespace AgentFunctionApp.Functions
                 string prefix = "";
                 if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(date))
                 {
-                    prefix = $"{deviceId}/{date}/";
+                    var dateParts = date.Split('-'); // 2025-09-29 -> [2025, 09, 29]
+                    prefix = $"{deviceId}/{dateParts[0]}/{dateParts[1]}/{dateParts[2]}/";
                 }
                 else if (!string.IsNullOrEmpty(deviceId))
                 {
