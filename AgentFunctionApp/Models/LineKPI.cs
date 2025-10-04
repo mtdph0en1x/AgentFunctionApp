@@ -22,19 +22,13 @@ namespace AgentFunctionApp.Models
         [JsonProperty("TotalBadCount")]
         public int TotalBadCount { get; set; }
 
-        [JsonProperty("TotalProductionCount")]
-        public int TotalProductionCount { get; set; }
+        [JsonProperty("LineQualityPercentage")]
+        public double LineQualityPercentage { get; set; }
 
-        [JsonProperty("QualityPercentage")]
-        public double QualityPercentage { get; set; }
+        [JsonProperty("LineAvailability")]
+        public double LineAvailability { get; set; }
 
-        [JsonProperty("AvgAvailability")]
-        public double AvgAvailability { get; set; }
-
-        [JsonProperty("AvgProductionRate")]
-        public double AvgProductionRate { get; set; }
-
-        [JsonProperty("ErrorCount")]
-        public int ErrorCount { get; set; }
+        [JsonProperty("LinePerformanceRate")]
+        public double LinePerformanceRate { get; set; }
     }
 }
