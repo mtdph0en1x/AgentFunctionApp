@@ -159,7 +159,7 @@ namespace AgentFunctionApp.Functions
                             ttl = 2592000 // 30 days
                         };
 
-                        await cosmosContainer.CreateItemAsync(statusChange, new PartitionKey(device.DeviceId));
+                        await cosmosContainer.CreateItemAsync(statusChange, new PartitionKey(device.LineId));
                         deviceStatusCache[device.DeviceId] = newStatus;
                     }
                 }
