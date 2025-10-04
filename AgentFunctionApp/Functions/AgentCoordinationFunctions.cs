@@ -147,7 +147,7 @@ namespace AgentFunctionApp.Functions
         private string DetermineDeviceStatus(DeviceTelemetry device, DateTime currentTime)
         {
             // Check if device is offline (no data in last 5 minutes)
-            var lastUpdateTime = device.WindowEnd;
+            var lastUpdateTime = DateTime.Parse(device.WindowEnd);
             var minutesSinceUpdate = (currentTime - lastUpdateTime).TotalMinutes;
 
             if (minutesSinceUpdate > 5) return "offline";
@@ -158,7 +158,8 @@ namespace AgentFunctionApp.Functions
 
         private string GetStatusChangeReason(DeviceTelemetry device, string newStatus, DateTime currentTime)
         {
-            var minutesSinceUpdate = (currentTime - device.WindowEnd).TotalMinutes;
+            var lastUpdateTime = DateTime.Parse(device.WindowEnd);
+            var minutesSinceUpdate = (currentTime - lastUpdateTime).TotalMinutes;
 
             return newStatus switch
             {
