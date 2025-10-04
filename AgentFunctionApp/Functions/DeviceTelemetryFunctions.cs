@@ -199,8 +199,8 @@ namespace AgentFunctionApp.Functions
                       ORDER BY c.Timestamp DESC")
                     .WithParameter("@deviceId", deviceId);
 
-                var iterator = _container.GetItemQueryIterator<dynamic>(query);
-                var items = new List<dynamic>();
+                var iterator = _container.GetItemQueryIterator<DeviceStatusChange>(query);
+                var items = new List<DeviceStatusChange>();
 
                 while (iterator.HasMoreResults)
                 {
