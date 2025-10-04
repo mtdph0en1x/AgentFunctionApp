@@ -2,9 +2,11 @@
 using Microsoft.Extensions.Logging;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Devices;
+using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using AgentFunctionApp.Models;
 using AgentFunctionApp.Services;
+using System.Collections.Concurrent;
 
 namespace AgentFunctionApp.Functions
 {
@@ -17,6 +19,9 @@ namespace AgentFunctionApp.Functions
         private static readonly ServiceClient serviceClient = ServiceClient.CreateFromConnectionString(IoTHubConnectionString);
         private static readonly string ServiceBusConnectionString = Environment.GetEnvironmentVariable("ServiceBusConnection") ?? "";
         private static readonly ServiceBusClient serviceBusClient = new ServiceBusClient(ServiceBusConnectionString);
+        private static readonly CosmosClient cosmosClient = new CosmosClient(Environment.GetEnvironmentVariable("COSMOS_CONNECTION_STRING"));
+        private static readonly Container cosmosContainer = cosmosClient.GetContainer("IIoTMonitoring", "Telemetry");
+        private static readonly ConcurrentDictionary<string, string> deviceStatusCache = new ConcurrentDictionary<string, string>();
 
         public AgentCoordinationFunctions(ILogger<AgentCoordinationFunctions> logger, AgentDecisionService decisionService, DeviceTwinService deviceTwinService)
         {
@@ -71,29 +76,98 @@ namespace AgentFunctionApp.Functions
         public async Task MonitorAgentHealth(
             [TimerTrigger("0 */2 * * * *")] TimerInfo timer)
         {
-            _logger.LogInformation("HEALTH MONITOR: Checking agent health");
+            _logger.LogInformation("HEALTH MONITOR: Checking device status and recording changes");
 
-            // This would normally check a database or cache for agent heartbeats
-            // For now, we'll simulate some basic health monitoring
-
-            var currentTime = DateTime.UtcNow;
-            var productionLines = new[] { "ProductionLine1", "ProductionLine2" };
-
-            foreach (var lineId in productionLines)
+            try
             {
-                var devices = await _deviceTwinService.GetDevicesInLineAsync(lineId);
+                // Fetch latest telemetry for all devices
+                var query = new QueryDefinition(
+                    @"SELECT * FROM c
+                      WHERE c.DocumentType IN ('telemetry-compressor', 'telemetry-press', 'telemetry-conveyor', 'telemetry-quality')
+                      ORDER BY c.WindowEnd DESC");
 
-                // Simulate checking device health
-                foreach (var deviceId in devices)
+                var iterator = cosmosContainer.GetItemQueryIterator<DeviceTelemetry>(query);
+                var items = new List<DeviceTelemetry>();
+
+                while (iterator.HasMoreResults)
                 {
-                    // In a real system, you'd check actual device status
-                    // For now, we'll just log that we're monitoring
-                    _logger.LogInformation($"Monitoring {deviceId} in {lineId}");
+                    var response = await iterator.ReadNextAsync();
+                    items.AddRange(response);
                 }
-            }
 
-            // If you need to send messages from a timer, use direct Service Bus client
-            // await SendHealthAlertIfNeeded(log);
+                // Get latest record per device
+                var latestByDevice = items
+                    .GroupBy(x => x.DeviceId)
+                    .Select(g => g.OrderByDescending(x => x.WindowEnd).First())
+                    .ToList();
+
+                var currentTime = DateTime.UtcNow;
+
+                // Check status for each device
+                foreach (var device in latestByDevice)
+                {
+                    var newStatus = DetermineDeviceStatus(device, currentTime);
+                    var previousStatus = deviceStatusCache.GetOrAdd(device.DeviceId, newStatus);
+
+                    // If status changed, write to Cosmos
+                    if (newStatus != previousStatus)
+                    {
+                        _logger.LogInformation($"Status change detected for {device.DeviceId}: {previousStatus} -> {newStatus}");
+
+                        var statusChange = new
+                        {
+                            id = Guid.NewGuid().ToString(),
+                            DocumentType = "status-change",
+                            DeviceId = device.DeviceId,
+                            LineId = device.LineId,
+                            DeviceType = device.DeviceType,
+                            Timestamp = currentTime,
+                            OldStatus = previousStatus,
+                            NewStatus = newStatus,
+                            Reason = GetStatusChangeReason(device, newStatus, currentTime),
+                            Temperature = device.AvgTemperature,
+                            ErrorCode = device.CurrentErrorCode,
+                            AvailabilityPercentage = device.AvailabilityPercentage,
+                            ttl = 2592000 // 30 days
+                        };
+
+                        await cosmosContainer.CreateItemAsync(statusChange, new PartitionKey(device.DeviceId));
+                        deviceStatusCache[device.DeviceId] = newStatus;
+                    }
+                }
+
+                _logger.LogInformation($"Health monitor completed. Checked {latestByDevice.Count} devices.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in health monitor");
+            }
+        }
+
+        private string DetermineDeviceStatus(DeviceTelemetry device, DateTime currentTime)
+        {
+            // Check if device is offline (no data in last 5 minutes)
+            var lastUpdateTime = device.WindowEnd;
+            var minutesSinceUpdate = (currentTime - lastUpdateTime).TotalMinutes;
+
+            if (minutesSinceUpdate > 5) return "offline";
+            if (device.CurrentErrorCode != 0) return "error";
+            if (device.AvgTemperature > 80) return "warning";
+            return "online";
+        }
+
+        private string GetStatusChangeReason(DeviceTelemetry device, string newStatus, DateTime currentTime)
+        {
+            var minutesSinceUpdate = (currentTime - device.WindowEnd).TotalMinutes;
+
+            return newStatus switch
+            {
+                "offline" => $"No data received for {Math.Round(minutesSinceUpdate, 1)} minutes",
+                "error" => $"Error code {device.CurrentErrorCode} detected",
+                "warning" => $"Temperature {Math.Round(device.AvgTemperature, 1)}°C exceeded threshold (80°C)",
+                "online" => "Device returned to normal operation",
+                _ => "Status changed"
+            };
         }
 
 

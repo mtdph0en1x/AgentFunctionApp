@@ -4,6 +4,7 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using System.Net;
 using AgentFunctionApp.Models;
+using Newtonsoft.Json;
 
 namespace AgentFunctionApp.Functions
 {
@@ -176,6 +177,44 @@ namespace AgentFunctionApp.Functions
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error fetching line KPIs");
+                var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await errorResponse.WriteAsJsonAsync(new { error = ex.Message });
+                return errorResponse;
+            }
+        }
+
+        [Function("GetDeviceStatusHistory")]
+        public async Task<HttpResponseData> GetDeviceStatusHistory(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "devices/{deviceId}/status-history")] HttpRequestData req,
+            string deviceId)
+        {
+            _logger.LogInformation($"Getting status history for device: {deviceId}");
+
+            try
+            {
+                var query = new QueryDefinition(
+                    @"SELECT TOP 10 * FROM c
+                      WHERE c.DocumentType = 'status-change'
+                        AND c.DeviceId = @deviceId
+                      ORDER BY c.Timestamp DESC")
+                    .WithParameter("@deviceId", deviceId);
+
+                var iterator = _container.GetItemQueryIterator<dynamic>(query);
+                var items = new List<dynamic>();
+
+                while (iterator.HasMoreResults)
+                {
+                    var response = await iterator.ReadNextAsync();
+                    items.AddRange(response);
+                }
+
+                var httpResponse = req.CreateResponse(HttpStatusCode.OK);
+                await httpResponse.WriteAsJsonAsync(items);
+                return httpResponse;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching device status history");
                 var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
                 await errorResponse.WriteAsJsonAsync(new { error = ex.Message });
                 return errorResponse;
