@@ -107,12 +107,40 @@ namespace AgentFunctionApp.Functions
                 foreach (var device in latestByDevice)
                 {
                     var newStatus = DetermineDeviceStatus(device, currentTime);
-                    var previousStatus = deviceStatusCache.GetOrAdd(device.DeviceId, newStatus);
 
-                    // If status changed, write to Cosmos
-                    if (newStatus != previousStatus)
+                    // Check if we have a previous status for this device
+                    if (deviceStatusCache.TryGetValue(device.DeviceId, out var previousStatus))
                     {
-                        _logger.LogInformation($"Status change detected for {device.DeviceId}: {previousStatus} -> {newStatus}");
+                        // Device exists in cache - check for change
+                        if (newStatus != previousStatus)
+                        {
+                            _logger.LogInformation($"Status change detected for {device.DeviceId}: {previousStatus} -> {newStatus}");
+
+                            var statusChange = new
+                            {
+                                id = Guid.NewGuid().ToString(),
+                                DocumentType = "status-change",
+                                DeviceId = device.DeviceId,
+                                LineId = device.LineId,
+                                DeviceType = device.DeviceType,
+                                Timestamp = currentTime,
+                                OldStatus = previousStatus,
+                                NewStatus = newStatus,
+                                Reason = GetStatusChangeReason(device, newStatus, currentTime),
+                                Temperature = device.AvgTemperature,
+                                ErrorCode = device.CurrentErrorCode,
+                                AvailabilityPercentage = device.AvailabilityPercentage,
+                                ttl = 2592000 // 30 days
+                            };
+
+                            await cosmosContainer.CreateItemAsync(statusChange, new PartitionKey(device.DeviceId));
+                            deviceStatusCache[device.DeviceId] = newStatus;
+                        }
+                    }
+                    else
+                    {
+                        // First time seeing this device - record initial status
+                        _logger.LogInformation($"Recording initial status for {device.DeviceId}: {newStatus}");
 
                         var statusChange = new
                         {
@@ -122,9 +150,9 @@ namespace AgentFunctionApp.Functions
                             LineId = device.LineId,
                             DeviceType = device.DeviceType,
                             Timestamp = currentTime,
-                            OldStatus = previousStatus,
+                            OldStatus = (string)null,
                             NewStatus = newStatus,
-                            Reason = GetStatusChangeReason(device, newStatus, currentTime),
+                            Reason = $"Initial status: {newStatus}",
                             Temperature = device.AvgTemperature,
                             ErrorCode = device.CurrentErrorCode,
                             AvailabilityPercentage = device.AvailabilityPercentage,
