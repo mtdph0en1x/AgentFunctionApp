@@ -116,9 +116,10 @@ namespace AgentFunctionApp.Functions
                         {
                             _logger.LogInformation($"Status change detected for {device.DeviceId}: {previousStatus} -> {newStatus}");
 
+                            var documentId = $"status-{device.DeviceId}-{currentTime:yyyy-MM-dd-HH-mm-ss}";
                             var statusChange = new
                             {
-                                id = Guid.NewGuid().ToString(),
+                                id = documentId,
                                 DocumentType = "status-change",
                                 DeviceId = device.DeviceId,
                                 LineId = device.LineId,
@@ -142,9 +143,10 @@ namespace AgentFunctionApp.Functions
                         // First time seeing this device - record initial status
                         _logger.LogInformation($"Recording initial status for {device.DeviceId}: {newStatus}");
 
+                        var documentId = $"status-{device.DeviceId}-{currentTime:yyyy-MM-dd-HH-mm-ss}";
                         var statusChange = new
                         {
-                            id = Guid.NewGuid().ToString(),
+                            id = documentId,
                             DocumentType = "status-change",
                             DeviceId = device.DeviceId,
                             LineId = device.LineId,
