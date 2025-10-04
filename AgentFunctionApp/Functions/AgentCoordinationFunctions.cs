@@ -168,7 +168,12 @@ namespace AgentFunctionApp.Functions
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in health monitor");
+                _logger.LogError($"Error in health monitor: {ex.GetType().Name} - {ex.Message}");
+                _logger.LogError($"Stack trace: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                {
+                    _logger.LogError($"Inner exception: {ex.InnerException.Message}");
+                }
             }
         }
 
