@@ -3,8 +3,8 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using System.Net;
 using Azure.Storage.Blobs;
-using Azure.Storage.Blobs.Models;
 using Newtonsoft.Json;
+using AgentFunctionApp.Models;
 
 namespace AgentFunctionApp.Functions
 {
@@ -35,13 +35,14 @@ namespace AgentFunctionApp.Functions
                 var container = query["container"] ?? "telemetry-qcs"; // default container
 
                 var containerClient = _blobServiceClient.GetBlobContainerClient(container);
-                var logs = new List<dynamic>();
+                var logs = new List<DeviceTelemetry>();
 
                 // Build prefix based on parameters
+                // Blob structure: deviceId/YYYY/MM/DD/HH.json
                 string prefix = "";
                 if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(date))
                 {
-                    var dateParts = date.Split('-'); // 2025-09-29 -> [2025, 09, 29]
+                    var dateParts = date.Split('-'); // 2025-10-04 -> [2025, 10, 04]
                     prefix = $"{deviceId}/{dateParts[0]}/{dateParts[1]}/{dateParts[2]}/";
                 }
                 else if (!string.IsNullOrEmpty(deviceId))
@@ -61,8 +62,11 @@ namespace AgentFunctionApp.Functions
                     {
                         if (!string.IsNullOrWhiteSpace(line))
                         {
-                            var log = JsonConvert.DeserializeObject<dynamic>(line);
-                            logs.Add(log);
+                            var log = JsonConvert.DeserializeObject<DeviceTelemetry>(line);
+                            if (log != null)
+                            {
+                                logs.Add(log);
+                            }
                         }
                     }
                 }
@@ -99,11 +103,13 @@ namespace AgentFunctionApp.Functions
 
                 await foreach (var blobItem in containerClient.GetBlobsAsync(prefix: prefix))
                 {
-                    // Extract date from path: deviceId/YYYY-MM-DD/HH-mm.json
+                    // Extract date from path: deviceId/YYYY/MM/DD/HH.json
                     var parts = blobItem.Name.Split('/');
-                    if (parts.Length >= 2)
+                    if (parts.Length >= 4)
                     {
-                        dates.Add(parts[1]); // The date part
+                        // Reconstruct date as YYYY-MM-DD
+                        var dateStr = $"{parts[1]}-{parts[2]}-{parts[3]}";
+                        dates.Add(dateStr);
                     }
                 }
 
