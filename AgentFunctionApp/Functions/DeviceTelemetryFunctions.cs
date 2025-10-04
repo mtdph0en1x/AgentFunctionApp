@@ -122,5 +122,64 @@ namespace AgentFunctionApp.Functions
                 return errorResponse;
             }
         }
+
+        [Function("GetLineKPIs")]
+        public async Task<HttpResponseData> GetLineKPIs(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "kpis")] HttpRequestData req)
+        {
+            _logger.LogInformation("Getting line KPI data");
+
+            try
+            {
+                // Get optional query parameters
+                var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
+                var lineId = query["lineId"];
+                var daysBack = int.TryParse(query["daysBack"], out var days) ? days : 30;
+
+                var cutoffDate = DateTime.UtcNow.AddDays(-daysBack);
+
+                QueryDefinition cosmosQuery;
+                if (!string.IsNullOrEmpty(lineId))
+                {
+                    cosmosQuery = new QueryDefinition(
+                        @"SELECT * FROM c
+                          WHERE c.DocumentType = 'line-kpi'
+                            AND c.LineId = @lineId
+                            AND c.WindowEnd >= @cutoffDate
+                          ORDER BY c.WindowEnd DESC")
+                        .WithParameter("@lineId", lineId)
+                        .WithParameter("@cutoffDate", cutoffDate);
+                }
+                else
+                {
+                    cosmosQuery = new QueryDefinition(
+                        @"SELECT * FROM c
+                          WHERE c.DocumentType = 'line-kpi'
+                            AND c.WindowEnd >= @cutoffDate
+                          ORDER BY c.WindowEnd DESC")
+                        .WithParameter("@cutoffDate", cutoffDate);
+                }
+
+                var iterator = _container.GetItemQueryIterator<LineKPI>(cosmosQuery);
+                var items = new List<LineKPI>();
+
+                while (iterator.HasMoreResults)
+                {
+                    var response = await iterator.ReadNextAsync();
+                    items.AddRange(response);
+                }
+
+                var httpResponse = req.CreateResponse(HttpStatusCode.OK);
+                await httpResponse.WriteAsJsonAsync(items);
+                return httpResponse;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching line KPIs");
+                var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await errorResponse.WriteAsJsonAsync(new { error = ex.Message });
+                return errorResponse;
+            }
+        }
     }
 }
