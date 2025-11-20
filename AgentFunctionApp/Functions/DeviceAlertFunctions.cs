@@ -32,6 +32,18 @@ namespace AgentFunctionApp.Functions
         {
             try
             {
+                // Read AlertId from ApplicationProperties for reaction time tracking
+                string? alertId = null;
+                if (message.ApplicationProperties.ContainsKey("AlertId"))
+                {
+                    alertId = message.ApplicationProperties["AlertId"]?.ToString();
+                    _logger.LogInformation($"Processing critical alert with AlertId: {alertId}");
+                }
+                else
+                {
+                    _logger.LogWarning("AlertId not found in message properties - reaction time tracking disabled");
+                }
+
                 var criticalAlert = JsonConvert.DeserializeObject<CriticalErrorAlert>(message.Body.ToString());
 
                 // Validate critical alert data
@@ -44,7 +56,7 @@ namespace AgentFunctionApp.Functions
 
                 _logger.LogInformation($"CRITICAL ALERT: {criticalAlert.DeviceId} - Code: {criticalAlert.DeviceError}, Priority: {criticalAlert.ErrorPriority}");
 
-                await ProcessCriticalAlert(criticalAlert);
+                await ProcessCriticalAlert(criticalAlert, alertId);
             }
             catch (Exception ex)
             {
@@ -53,7 +65,7 @@ namespace AgentFunctionApp.Functions
             }
         }
 
-        private async Task ProcessCriticalAlert(CriticalErrorAlert alert)
+        private async Task ProcessCriticalAlert(CriticalErrorAlert alert, string? alertId)
         {
             _logger.LogWarning($"IMMEDIATE CRITICAL ACTION: {alert.DeviceId} - ErrorCode: {alert.DeviceError}, Priority: {alert.ErrorPriority}");
 
@@ -73,7 +85,7 @@ namespace AgentFunctionApp.Functions
 
                     foreach (var deviceId in affectedDevices)
                     {
-                        await CallDirectMethod(deviceId, methodName, actionReason);
+                        await CallDirectMethod(deviceId, methodName, actionReason, alertId);
                     }
                 }
                 else
@@ -82,7 +94,7 @@ namespace AgentFunctionApp.Functions
                     actionReason = alert.HasSensorFailure == 1 ? "Sensor failure detected" : "Unknown error detected";
 
                     // Other errors only affect the specific device
-                    await CallDirectMethod(alert.DeviceId, methodName, actionReason);
+                    await CallDirectMethod(alert.DeviceId, methodName, actionReason, alertId);
                 }
             }
             catch (Exception ex)
@@ -92,7 +104,7 @@ namespace AgentFunctionApp.Functions
             }
         }
 
-        private async Task CallDirectMethod(string deviceId, string methodName, string reason)
+        private async Task CallDirectMethod(string deviceId, string methodName, string reason, string? alertId = null)
         {
             try
             {
@@ -105,7 +117,15 @@ namespace AgentFunctionApp.Functions
                 }
 
                 var method = new CloudToDeviceMethod(methodName);
-                method.SetPayloadJson("{}");
+
+                // Build payload with AlertId for reaction time tracking
+                var payload = new
+                {
+                    alertId = alertId,
+                    reason = reason,
+                    timestamp = DateTime.UtcNow
+                };
+                method.SetPayloadJson(JsonConvert.SerializeObject(payload));
                 method.ResponseTimeout = TimeSpan.FromSeconds(10);
 
                 var response = await serviceClient.InvokeDeviceMethodAsync(deviceId, method);
@@ -113,6 +133,25 @@ namespace AgentFunctionApp.Functions
                 if (response.Status == 200)
                 {
                     _logger.LogInformation($"{methodName} executed successfully on {deviceId} - {reason}");
+
+                    // Parse response to extract reaction time metrics (if available)
+                    if (!string.IsNullOrEmpty(response.GetPayloadAsJson()))
+                    {
+                        try
+                        {
+                            var responseData = JsonConvert.DeserializeObject<dynamic>(response.GetPayloadAsJson());
+                            var totalReactionMs = responseData?.totalReactionTimeMs;
+
+                            if (totalReactionMs != null && alertId != null)
+                            {
+                                _logger.LogWarning($"⏱️ REACTION TIME TRACKED - AlertId: {alertId}, Device: {deviceId}, Total: {totalReactionMs} ms");
+                            }
+                        }
+                        catch (Exception parseEx)
+                        {
+                            _logger.LogDebug($"Could not parse reaction time from response: {parseEx.Message}");
+                        }
+                    }
                 }
                 else
                 {
