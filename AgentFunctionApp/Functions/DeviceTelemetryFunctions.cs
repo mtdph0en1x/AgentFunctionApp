@@ -241,17 +241,40 @@ namespace AgentFunctionApp.Functions
                     requestBody = await reader.ReadToEndAsync();
                 }
 
-                var updateRequest = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(requestBody);
+                var updateRequest = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(requestBody);
 
-                if (updateRequest == null || !updateRequest.ContainsKey("propertyName") || !updateRequest.ContainsKey("propertyValue"))
+                if (!updateRequest.TryGetProperty("propertyName", out var propertyNameElement) ||
+                    !updateRequest.TryGetProperty("propertyValue", out var propertyValueElement))
                 {
                     var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
                     await badRequest.WriteAsJsonAsync(new { error = "Request must contain propertyName and propertyValue" });
                     return badRequest;
                 }
 
-                var propertyName = updateRequest["propertyName"].ToString();
-                var propertyValue = updateRequest["propertyValue"];
+                var propertyName = propertyNameElement.GetString();
+
+                // Extract the actual value based on its type
+                object propertyValue;
+                switch (propertyValueElement.ValueKind)
+                {
+                    case System.Text.Json.JsonValueKind.Number:
+                        // Try to get as double for production rate
+                        propertyValue = propertyValueElement.GetDouble();
+                        break;
+                    case System.Text.Json.JsonValueKind.String:
+                        propertyValue = propertyValueElement.GetString();
+                        break;
+                    case System.Text.Json.JsonValueKind.True:
+                    case System.Text.Json.JsonValueKind.False:
+                        propertyValue = propertyValueElement.GetBoolean();
+                        break;
+                    default:
+                        propertyValue = propertyValueElement.ToString();
+                        break;
+                }
+
+                // Log what we're sending
+                _logger.LogInformation($"Sending to device twin - Property: {propertyName}, Value: {propertyValue}, Type: {propertyValue?.GetType().Name}");
 
                 // Update device twin desired property
                 await _deviceTwinService.UpdateDeviceTwinDesiredPropertyAsync(deviceId, propertyName, propertyValue);
