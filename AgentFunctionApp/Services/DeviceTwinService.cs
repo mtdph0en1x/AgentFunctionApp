@@ -112,6 +112,35 @@ namespace AgentFunctionApp.Services
             _logger.LogInformation("Device twin cache cleared");
         }
 
+        public async Task UpdateDeviceTwinDesiredPropertyAsync(string deviceId, string propertyName, object propertyValue)
+        {
+            try
+            {
+                var twin = await _registryManager.GetTwinAsync(deviceId);
+
+                var patch = new
+                {
+                    properties = new
+                    {
+                        desired = new Dictionary<string, object>
+                        {
+                            { propertyName, propertyValue }
+                        }
+                    }
+                };
+
+                var patchJson = JsonConvert.SerializeObject(patch);
+                await _registryManager.UpdateTwinAsync(deviceId, patchJson, twin.ETag);
+
+                _logger.LogInformation($"Updated device twin for {deviceId}: {propertyName} = {propertyValue}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Failed to update device twin for {deviceId}: {ex.Message}");
+                throw;
+            }
+        }
+
         private DeviceMetadata ExtractMetadataFromTwin(Twin twin, string deviceId)
         {
             var metadata = new DeviceMetadata

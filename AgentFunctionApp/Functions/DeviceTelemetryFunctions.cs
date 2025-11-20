@@ -4,7 +4,9 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using System.Net;
 using AgentFunctionApp.Models;
+using AgentFunctionApp.Services;
 using Newtonsoft.Json;
+using System.Text.Json;
 
 namespace AgentFunctionApp.Functions
 {
@@ -13,11 +15,13 @@ namespace AgentFunctionApp.Functions
         private readonly ILogger _logger;
         private readonly CosmosClient _cosmosClient;
         private readonly Container _container;
+        private readonly DeviceTwinService _deviceTwinService;
 
-        public DeviceTelemetryFunctions(ILoggerFactory loggerFactory)
+        public DeviceTelemetryFunctions(ILoggerFactory loggerFactory, DeviceTwinService deviceTwinService)
         {
             _logger = loggerFactory.CreateLogger<DeviceTelemetryFunctions>();
-            
+            _deviceTwinService = deviceTwinService;
+
             var connectionString = Environment.GetEnvironmentVariable("COSMOS_CONNECTION_STRING");
             _cosmosClient = new CosmosClient(connectionString);
             _container = _cosmosClient.GetContainer("IIoTMonitoring", "Telemetry");
@@ -215,6 +219,53 @@ namespace AgentFunctionApp.Functions
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error fetching device status history");
+                var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await errorResponse.WriteAsJsonAsync(new { error = ex.Message });
+                return errorResponse;
+            }
+        }
+
+        [Function("UpdateDeviceTwin")]
+        public async Task<HttpResponseData> UpdateDeviceTwin(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "devices/{deviceId}/twin")] HttpRequestData req,
+            string deviceId)
+        {
+            _logger.LogInformation($"Updating device twin for: {deviceId}");
+
+            try
+            {
+                // Parse request body
+                string requestBody;
+                using (var reader = new StreamReader(req.Body))
+                {
+                    requestBody = await reader.ReadToEndAsync();
+                }
+
+                var updateRequest = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(requestBody);
+
+                if (updateRequest == null || !updateRequest.ContainsKey("propertyName") || !updateRequest.ContainsKey("propertyValue"))
+                {
+                    var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await badRequest.WriteAsJsonAsync(new { error = "Request must contain propertyName and propertyValue" });
+                    return badRequest;
+                }
+
+                var propertyName = updateRequest["propertyName"].ToString();
+                var propertyValue = updateRequest["propertyValue"];
+
+                // Update device twin desired property
+                await _deviceTwinService.UpdateDeviceTwinDesiredPropertyAsync(deviceId, propertyName, propertyValue);
+
+                var httpResponse = req.CreateResponse(HttpStatusCode.OK);
+                await httpResponse.WriteAsJsonAsync(new {
+                    success = true,
+                    message = $"Device twin updated: {propertyName} = {propertyValue}"
+                });
+                return httpResponse;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error updating device twin for {deviceId}");
                 var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
                 await errorResponse.WriteAsJsonAsync(new { error = ex.Message });
                 return errorResponse;
