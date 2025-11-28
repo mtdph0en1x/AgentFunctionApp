@@ -111,7 +111,7 @@ namespace AgentFunctionApp.Services
             _lineDeviceCache.Clear();
             _logger.LogInformation("Device twin cache cleared");
         }
-
+        // Test CICD
         public async Task UpdateDeviceTwinDesiredPropertyAsync(string deviceId, string propertyName, object propertyValue)
         {
             try
